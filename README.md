@@ -10,7 +10,7 @@ Handles incoming phone calls. Users call your Twilio number and interact with a 
 
 ### [Outbound Calling](./outbound/)
 
-Initiates outbound phone calls programmatically where your bot calls users. *(Work in progress)*
+Initiates outbound phone calls programmatically where your bot calls users. Deployable to [Modal](https://modal.com) or locally via Docker Compose.
 
 ## Architecture
 
@@ -29,7 +29,10 @@ Phone Call <-> Twilio <-> Media Streams (WebSocket) <-> Pipecat <-> AI Services
 
 ## Getting Started
 
-See the [inbound/](./inbound/) README for setup and deployment instructions.
+Each bot has its own README with setup and deployment instructions:
+
+- [Inbound setup](./inbound/README.md) — Modal deployment
+- [Outbound setup](./outbound/README.md) — Modal or Docker deployment
 
 ## Links
 
