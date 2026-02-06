@@ -12,5 +12,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
+# Copy project files so `uv run` can verify the environment
+COPY pyproject.toml uv.lock ./
+
 # Copy the application code
-COPY ./bot.py bot.py
+COPY ./bot.py ./server.py ./server_utils.py ./
+
+# Expose port
+EXPOSE 7860
+
+# Set the entrypoint to use uv run
+ENTRYPOINT ["uv", "run", "server.py"]

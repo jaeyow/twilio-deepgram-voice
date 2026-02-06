@@ -1,6 +1,6 @@
 # Twilio Chatbot: Outbound
 
-This project is a Pipecat-based chatbot that integrates with Twilio to make outbound calls with personalized call information. The project includes FastAPI endpoints for initiating outbound calls and handling WebSocket connections with call context.
+A Pipecat-based voice bot that makes outbound phone calls via Twilio, with a FastAPI server for initiating calls and handling WebSocket connections.
 
 ## How It Works
 
@@ -20,95 +20,88 @@ curl request → /dialout endpoint → Twilio REST API → Call initiated →
 TwiML fetched → WebSocket connection → Bot conversation
 ```
 
-## Prerequisites
-
-### Twilio
-
-- A Twilio account with:
-  - Account SID and Auth Token
-  - A purchased phone number that supports voice calls
-
 ### AI Services
 
-- Google API key for the LLM inference
-- Deepgram API key for speech-to-text
-- Cartesia API key for text-to-speech
+| Service | Provider | Model |
+|---------|----------|-------|
+| LLM | Groq | llama-3.3-70b-versatile |
+| STT | Deepgram | nova-3 |
+| TTS | Deepgram | aura-2-theia-en |
+| VAD | Silero | + Smart Turn v3 (ML-based end-of-turn detection) |
 
-### System
+### Audio Processing
 
-- Python 3.10+
-- `uv` package manager
-- ngrok (for local development)
-- Docker (for production deployment)
+- RNNoise filter for background noise suppression
+- 8kHz sample rate (Twilio telephony standard)
+- Call recordings saved as WAV files
+
+## Prerequisites
+
+- A [Twilio](https://www.twilio.com/) account with a phone number that supports voice calls
+- A [Groq](https://console.groq.com/) API key
+- A [Deepgram](https://deepgram.com/) API key
+- [Modal](https://modal.com/) CLI installed and authenticated (for Modal deployment)
+- [Docker](https://docs.docker.com/get-docker/) (and Docker Compose) (for Docker deployment)
 
 ## Setup
 
-1. Set up a virtual environment and install dependencies:
+1. Create an `.env` file with your API keys:
 
-```bash
+   ```sh
+   cd outbound
+   cp env.example .env
+   ```
+
+   Fill in the values:
+
+   ```
+   GROQ_API_KEY=your_groq_api_key
+   DEEPGRAM_API_KEY=your_deepgram_api_key
+   TWILIO_ACCOUNT_SID=your_twilio_account_sid
+   TWILIO_AUTH_TOKEN=your_twilio_auth_token
+   LOCAL_SERVER_URL=https://your-tunnel-url
+   TO_NUMBER=+15551234567
+   FROM_NUMBER=+15559876543
+   ```
+
+   - `TO_NUMBER`: The phone number to call (E.164 format)
+   - `FROM_NUMBER`: Your Twilio phone number (E.164 format)
+   - `LOCAL_SERVER_URL`: Only needed for Docker deployment (not Modal)
+
+## Modal Deployment
+
+Modal provides a serverless cloud deployment. The Modal app dynamically derives all URLs from request headers, so no `LOCAL_SERVER_URL` is needed — just the four API keys.
+
+### 1. Install the Modal CLI
+
+```sh
+pip install modal
+modal setup
+```
+
+### 2. Deploy
+
+```sh
 cd outbound
-uv sync
+modal serve modal_app.py    # dev mode (temporary URL, live reload)
+modal deploy modal_app.py   # production (permanent URL)
 ```
 
-2. Get your Twilio credentials:
+Modal will print the deployment URL, e.g. `https://<workspace>--twilio-outbound-bot-serve.modal.run`.
 
-- **Account SID & Auth Token**: Found in your [Twilio Console Dashboard](https://console.twilio.com/)
-- **Phone Number**: [Purchase a phone number](https://console.twilio.com/us1/develop/phone-numbers/manage/search) that supports voice calls
+### 3. Make an outbound call
 
-3. Set up environment variables:
+Using the test script:
 
-```bash
-cp env.example .env
-# Edit .env with your API keys
+```sh
+cd scripts
+uv run python test_call.py https://<workspace>--twilio-outbound-bot-serve.modal.run
 ```
 
-## Environment Configuration
+Or with curl:
 
-The bot supports two deployment modes controlled by the `ENV` variable:
-
-### Local Development (`ENV=local`)
-
-- Uses your local server or ngrok URL for WebSocket connections
-- Default configuration for development and testing
-- WebSocket connections go directly to your running server
-
-### Production (`ENV=production`)
-
-- Uses Pipecat Cloud WebSocket URLs automatically
-- Requires `AGENT_NAME` and `ORGANIZATION_NAME` from your Pipecat Cloud deployment
-- Set these when deploying to production environments
-- WebSocket connections route through Pipecat Cloud infrastructure
-
-## Local Development
-
-1. Start the outbound bot server:
-
-   ```bash
-   uv run server.py
-   ```
-
-The server will start on port 7860.
-
-2. Using a new terminal, expose your server to the internet (for development)
-
-   ```bash
-   ngrok http 7860
-   ```
-
-   > Tip: Use the `--subdomain` flag for a reusable ngrok URL.
-
-   Copy the ngrok URL (e.g., `https://abc123.ngrok.io`) and update `LOCAL_SERVER_URL` in your `.env` file.
-
-3. No additional Twilio configuration needed
-
-   Unlike inbound calling, outbound calls don't require webhook configuration in the Twilio console. The server will make direct API calls to Twilio to initiate calls.
-
-## Making an Outbound Call
-
-With the server running and exposed via ngrok, you can initiate outbound calls:
-
-```bash
-curl -X POST https://your-ngrok-url.ngrok.io/dialout \
+```sh
+curl -X POST https://<workspace>--twilio-outbound-bot-serve.modal.run/dialout \
   -H "Content-Type: application/json" \
   -d '{
     "to_number": "+15551234567",
@@ -116,52 +109,132 @@ curl -X POST https://your-ngrok-url.ngrok.io/dialout \
   }'
 ```
 
-Replace:
+> Note: the `from_number` must be a phone number owned by your Twilio account.
 
-- `your-ngrok-url.ngrok.io` with your actual ngrok URL
-- `+15551234567` with the phone number to call (E.164 format)
-- `+15559876543` with your Twilio phone number (E.164 format)
+### Recordings (Modal)
+
+Call recordings are saved as WAV files to a Modal Volume (`pipecat-recordings`).
+
+```sh
+# List recordings
+modal volume ls pipecat-recordings
+
+# Download a recording
+modal volume get pipecat-recordings <filename>.wav .
+```
+
+## Docker Deployment
+
+Since Twilio needs a publicly reachable URL to send webhooks and media streams, you'll need a tunnel. VS Code has built-in [dev tunnels](https://code.visualstudio.com/docs/editor/port-forwarding) that work well for this.
+
+### 1. Forward port 7860 with VS Code dev tunnels
+
+Before starting the container, forward port `7860` so you can get the public URL:
+
+1. Open the **Ports** panel in VS Code (View > Open View... > Ports, or the Ports tab in the bottom panel)
+2. Click **Forward a Port** and enter `7860`
+3. Right-click the forwarded port and set **Port Visibility** to **Public** (Twilio needs unauthenticated access)
+4. Copy the **Forwarded Address** (e.g. `https://<tunnel-name>-7860-<region>.devtunnels.ms`)
+
+### 2. Update `.env` with your tunnel URL
+
+Set `LOCAL_SERVER_URL` to your dev tunnel URL:
+
+```
+LOCAL_SERVER_URL=https://<tunnel-name>-7860-<region>.devtunnels.ms
+```
+
+This URL is used in two places:
+- The `/dialout` endpoint tells Twilio to fetch TwiML from `LOCAL_SERVER_URL/twiml`
+- The TwiML response tells Twilio to open a WebSocket to `wss://<host>/ws`
+
+### 3. Run with Docker Compose
+
+```sh
+cd outbound
+docker compose up --build
+```
+
+The server will start on port 7860.
+
+### 4. Make an outbound call
+
+With the server running, initiate a call using the test script (reads `TO_NUMBER` and `FROM_NUMBER` from `.env`):
+
+```sh
+cd scripts
+uv run python test_call.py
+```
+
+Or with curl:
+
+```sh
+curl -X POST https://<your-tunnel-url>/dialout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to_number": "+15551234567",
+    "from_number": "+15559876543"
+  }'
+```
 
 > Note: the `from_number` must be a phone number owned by your Twilio account
 
-## Production Deployment
+### Alternative: docker run
 
-### 1. Deploy your Bot to Pipecat Cloud
+If you prefer not to use Docker Compose:
 
-Follow the [quickstart instructions](https://docs.pipecat.ai/getting-started/quickstart#step-2%3A-deploy-to-production) to deploy your bot to Pipecat Cloud.
-
-### 2. Configure Production Environment
-
-Update your production `.env` file with the Pipecat Cloud details:
-
-```bash
-# Set to production mode
-ENV=production
-
-# Your Pipecat Cloud deployment details
-AGENT_NAME=your-agent-name
-ORGANIZATION_NAME=your-org-name
-
-# Keep your existing Twilio and AI service keys
+```sh
+cd outbound
+docker build -t twilio-outbound-bot .
+docker run --rm \
+  --env-file .env \
+  -e RECORDINGS_DIR=/recordings \
+  -v "$(pwd)/recordings:/recordings" \
+  -p 7860:7860 \
+  twilio-outbound-bot
 ```
 
-### 3. Deploy the Server
+### Recordings
 
-The `server.py` handles outbound call initiation and should be deployed separately from your bot:
+When running with Docker, recordings are saved to the `./recordings/` directory on your host machine (mounted as a volume).
 
-- **Bot**: Runs on Pipecat Cloud (handles the conversation)
-- **Server**: Runs on your infrastructure (initiates calls, serves TwiML responses)
+### Notes
 
-When `ENV=production`, the server automatically routes WebSocket connections to your Pipecat Cloud bot.
-
-> Alternatively, you can test your Pipecat Cloud deployment by running your server locally.
-
-### Call your Bot
-
-As you did before, initiate a call via `curl` command to trigger your bot to dial a number.
+- VS Code dev tunnel URLs are stable for your account, so you won't need to update `LOCAL_SERVER_URL` between sessions.
+- The port visibility **must** be set to **Public**. The default "Private" requires authentication, which Twilio cannot provide.
+- Unlike inbound calling, outbound calls don't require webhook configuration in the Twilio console. The server makes direct API calls to Twilio to initiate calls.
 
 ## Accessing Call Information in Your Bot
 
-Your bot automatically receives call information through Twilio Stream Parameters. In this example, the phone numbers (`to_number` and `from_number`) are passed as parameters and extracted by the `parse_telephony_websocket` function.
+Your bot automatically receives call information through Twilio Stream Parameters. The phone numbers (`to_number` and `from_number`) are passed as parameters and extracted by the `parse_telephony_websocket` function.
 
-You can extend the `DialoutRequest` model in `server_utils.py` to include additional custom data (customer info, campaign data, etc.) and pass it through as stream parameters for personalized conversations. See `bot.py` for implementation details.
+You can extend the `DialoutRequest` model in `server_utils.py` to include additional custom data (customer info, campaign data, etc.) and pass it through as stream parameters for personalized conversations.
+
+## Project Structure
+
+```
+outbound/
+  bot.py              # Bot logic: pipeline, AI services, event handlers
+  server.py           # FastAPI server: /dialout, /twiml, /ws endpoints (Docker)
+  server_utils.py     # Twilio helpers: call initiation, TwiML generation (Docker)
+  modal_app.py        # Modal deployment: image, secrets, FastAPI routes
+  pyproject.toml      # Python project config and dependencies
+  uv.lock             # Dependency lockfile (committed for reproducible builds)
+  Dockerfile          # Docker image definition
+  docker-compose.yml  # Docker Compose config for local development
+  pcc-deploy.toml     # Pipecat Cloud deployment config
+  .env                # API keys (not committed)
+  env.example         # Template for .env
+scripts/
+  test_call.py        # Script to trigger an outbound call (accepts optional URL arg)
+  pyproject.toml      # Script dependencies (httpx, python-dotenv)
+```
+
+## Customization
+
+The bot is configured in `bot.py`. Key areas to customize:
+
+- **System prompt** (line 97): Change the bot's personality and behavior
+- **Voice** (line 93): Change the Deepgram TTS voice
+- **Turn detection** (line 105): Tune Smart Turn and VAD parameters
+- **Idle timeout** (line 115): How long to wait before the bot continues on its own

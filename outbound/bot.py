@@ -4,14 +4,22 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
+import asyncio
+import datetime
+import io
 import os
-import sys
+import wave
 
+import aiofiles
+from deepgram import LiveOptions
 from dotenv import load_dotenv
 from loguru import logger
+from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -20,34 +28,66 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.services.google.llm import GoogleLLMService
+from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
+from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy, VADUserTurnStartStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 load_dotenv(override=True)
 
-logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
+# Reduce logging noise from empty audio frame warnings
+logger.disable("pipecat.services.stt_service")
+
+
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int):
+    if len(audio) > 0:
+        recordings_dir = os.getenv("RECORDINGS_DIR", "/recordings")
+        os.makedirs(recordings_dir, exist_ok=True)
+
+        filename = f"recording_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+        filepath = os.path.join(recordings_dir, filename)
+
+        try:
+            with io.BytesIO() as buffer:
+                with wave.open(buffer, "wb") as wf:
+                    wf.setsampwidth(2)
+                    wf.setnchannels(num_channels)
+                    wf.setframerate(sample_rate)
+                    wf.writeframes(audio)
+                buffer_value = buffer.getvalue()
+
+            async with aiofiles.open(filepath, "wb") as file:
+                await file.write(buffer_value)
+
+            logger.info(f"Merged audio saved to {filepath} ({len(audio)} bytes)")
+        except Exception as e:
+            logger.error(f"Failed to save audio to {filepath}: {e}")
+    else:
+        logger.info("No audio data to save")
 
 
 async def run_bot(transport: BaseTransport, handle_sigint: bool):
-    llm = GoogleLLMService(api_key=os.getenv("GOOGLE_API_KEY"))
+    llm = GroqLLMService(api_key=os.getenv("GROQ_API_KEY"))
 
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    stt = DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        live_options=LiveOptions(model="nova-3"),
+    )
 
-    tts = CartesiaTTSService(
-        api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
+    tts = DeepgramTTSService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        voice="aura-2-theia-en",
     )
 
     messages = [
@@ -61,15 +101,23 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
         },
     ]
 
+    smart_turn_params = SmartTurnParams(stop_secs=1.5, pre_speech_ms=0.0)
+    turn_analyzer = LocalSmartTurnAnalyzerV3(params=smart_turn_params)
+
     context = LLMContext(messages)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
-                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
+                start=[VADUserTurnStartStrategy(), TranscriptionUserTurnStartStrategy()],
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=turn_analyzer)],
             ),
+            user_turn_stop_timeout=2.0,
+            user_idle_timeout=5.0,
         ),
     )
+
+    audiobuffer = AudioBufferProcessor()
 
     pipeline = Pipeline(
         [
@@ -79,6 +127,7 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
             llm,  # LLM
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
+            audiobuffer,  # Used to buffer the audio in the pipeline
             assistant_aggregator,
         ]
     )
@@ -95,15 +144,30 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        # Kick off the outbound conversation, waiting for the user to speak first
-        logger.info("Starting outbound call conversation")
+        logger.info("Starting audio recording...")
+        await audiobuffer.start_recording()
+        # Kick off the outbound conversation
+        messages.append({"role": "system", "content": "Greet the person and introduce yourself."})
+        await task.queue_frames([LLMRunFrame()])
+
+    @user_aggregator.event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(aggregator):
+        logger.info("User idle — prompting bot to continue")
+        messages.append({"role": "system", "content": "The person is quiet. Continue the conversation."})
+        await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info("Outbound call ended")
+        logger.info("Outbound call ended, saving final recording...")
+        if audiobuffer.has_audio():
+            audio = audiobuffer.merge_audio_buffers()
+            await asyncio.shield(
+                save_audio(audio, audiobuffer.sample_rate, audiobuffer.num_channels)
+            )
+        await audiobuffer.stop_recording()
         await task.cancel()
 
-    runner = PipelineRunner(handle_sigint=handle_sigint)
+    runner = PipelineRunner(handle_sigint=handle_sigint, force_gc=True)
 
     await runner.run(task)
 
@@ -114,8 +178,6 @@ async def bot(runner_args: RunnerArguments):
     logger.info(f"Auto-detected transport: {transport_type}")
 
     # Access custom stream parameters passed from TwiML
-    # Use the body data to personalize the conversation
-    # by loading customer data based on the to_number or from_number
     body_data = call_data.get("body", {})
     to_number = body_data.get("to_number")
     from_number = body_data.get("from_number")
@@ -135,7 +197,10 @@ async def bot(runner_args: RunnerArguments):
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2)),
+            audio_in_filter=RNNoiseFilter(),
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(start_secs=0.2, stop_secs=0.5)
+            ),
             serializer=serializer,
         ),
     )
