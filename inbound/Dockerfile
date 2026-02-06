@@ -12,6 +12,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
+# Copy project files so `uv run` can verify the environment
+COPY pyproject.toml uv.lock ./
+
 # Copy the application code
 COPY ./bot.py bot.py
 
