@@ -1,0 +1,9 @@
+[project]
+name = "scripts"
+version = "0.1.0"
+description = "Lightweight utility scripts for testing"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx",
+    "python-dotenv",
+]

@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    ports:
+      - "7860:7860"
+    env_file:
+      - .env
+    environment:
+      - RECORDINGS_DIR=/recordings
+    volumes:
+      - ./recordings:/recordings
