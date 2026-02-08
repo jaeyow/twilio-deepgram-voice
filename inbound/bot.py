@@ -4,14 +4,9 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
-import asyncio
-import datetime
-import io
 import os
-import wave
 from typing import Optional
 
-import aiofiles
 import aiohttp
 from deepgram import LiveOptions
 from dotenv import load_dotenv
@@ -33,7 +28,6 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.turns.user_start import VADUserTurnStartStrategy, TranscriptionUserTurnStartStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
-from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
@@ -95,35 +89,42 @@ async def get_call_info(call_sid: str) -> dict:
         return {}
 
 
-async def save_audio(audio: bytes, sample_rate: int, num_channels: int):
-    if len(audio) > 0:
-        # Use /recordings directory which should be mounted as a volume
-        recordings_dir = os.getenv("RECORDINGS_DIR", "/recordings")
-        os.makedirs(recordings_dir, exist_ok=True)
-        
-        filename = f"recording_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        filepath = os.path.join(recordings_dir, filename)
-        
-        try:
-            with io.BytesIO() as buffer:
-                with wave.open(buffer, "wb") as wf:
-                    wf.setsampwidth(2)
-                    wf.setnchannels(num_channels)
-                    wf.setframerate(sample_rate)
-                    wf.writeframes(audio)
-                buffer_value = buffer.getvalue()
-            
-            async with aiofiles.open(filepath, "wb") as file:
-                await file.write(buffer_value)
-            
-            logger.info(f"Merged audio saved to {filepath} ({len(audio)} bytes)")
-        except Exception as e:
-            logger.error(f"Failed to save audio to {filepath}: {e}")
-    else:
-        logger.info("No audio data to save")
+async def start_twilio_recording(call_sid: str):
+    """Start a Twilio-side recording for the given call via the REST API.
+
+    Recordings are stored in your Twilio account and accessible via the console or API.
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+
+    if not account_sid or not auth_token:
+        logger.warning("Missing Twilio credentials, cannot start recording")
+        return
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}/Recordings.json"
+
+    try:
+        auth = aiohttp.BasicAuth(account_sid, auth_token)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                auth=auth,
+                data={"RecordingChannels": "dual"},
+            ) as response:
+                if response.status not in (200, 201):
+                    error_text = await response.text()
+                    logger.error(f"Twilio recording API error ({response.status}): {error_text}")
+                    return
+
+                data = await response.json()
+                logger.info(f"Twilio recording started: SID={data.get('sid')}")
+
+    except Exception as e:
+        logger.error(f"Error starting Twilio recording: {e}")
 
 
-async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool):
+async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool, call_sid: str = ""):
     llm = GroqLLMService(api_key=os.getenv("GROQ_API_KEY"))
 
     stt = DeepgramSTTService(                                      
@@ -139,7 +140,16 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool):
     messages = [
         {
             "role": "system",
-            "content": "You are Miss Harper, an elementary school teacher in an audio call. Your output will be converted to audio so don't include special characters in your answers. Respond to what the student said in a short short sentence.",
+            "content": (
+                "You are Miss Harper, an elementary school teacher in an audio call. "
+                "Your output will be converted to audio so don't include special characters in your answers. "
+                "You are an expert in answering questions about elementary school subjects like math, science, history, and literature. "
+                "If the student asks about math, just give the answer without explaining how you got it. "
+                "For other subjects, provide clear and concise explanations suitable for an elementary school student. "
+                "If the student is quiet for a while, you will continue teaching by asking them questions or providing "
+                "interesting facts related to the current topic. Always keep the conversation engaging and educational. "
+                "You are also a storyteller and if asked for a story, you will tell an interesting and age-appropriate story to the student."
+            ),
         },
     ]
 
@@ -159,10 +169,6 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool):
         ),
     )
 
-    # NOTE: Watch out! This will save all the conversation in memory.
-    # We'll save it as a single file when the call ends.
-    audiobuffer = AudioBufferProcessor()
-
     pipeline = Pipeline(
         [
             transport.input(),  # Websocket input from client
@@ -171,7 +177,6 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool):
             llm,  # LLM
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
-            audiobuffer,  # Used to buffer the audio in the pipeline
             assistant_aggregator,
         ]
     )
@@ -188,9 +193,9 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        # Start recording.
-        logger.info("Starting audio recording...")
-        await audiobuffer.start_recording()
+        # Start Twilio-level recording.
+        if call_sid:
+            await start_twilio_recording(call_sid)
         # Kick off the conversation.
         messages.append({"role": "system", "content": "Say hello and introduce yourself as Miss Harper."})
         await task.queue_frames([LLMRunFrame()])
@@ -203,22 +208,8 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info("Client disconnected, saving final recording...")
-        # Get the full audio buffer before cancelling
-        if audiobuffer.has_audio():
-            audio = audiobuffer.merge_audio_buffers()
-            await asyncio.shield(
-                save_audio(audio, audiobuffer.sample_rate, audiobuffer.num_channels)
-            )
-        await audiobuffer.stop_recording()
+        logger.info("Client disconnected")
         await task.cancel()
-
-    # Remove the on_audio_data handler since we're saving on disconnect
-    # @audiobuffer.event_handler("on_audio_data")
-    # async def on_audio_data(buffer, audio, sample_rate, num_channels):
-    #     logger.info(f"on_audio_data event fired: {len(audio)} bytes, {sample_rate}Hz, {num_channels} channels")
-    #     # Shield from task cancellation to ensure audio is saved even if call ends
-    #     await asyncio.shield(save_audio(audio, sample_rate, num_channels))
 
     # We use `handle_sigint=False` because `uvicorn` is controlling keyboard
     # interruptions. We use `force_gc=True` to force garbage collection after
@@ -262,7 +253,7 @@ async def bot(runner_args: RunnerArguments, testing: Optional[bool] = False):
         ),
     )
 
-    await run_bot(transport, runner_args.handle_sigint, testing)
+    await run_bot(transport, runner_args.handle_sigint, testing, call_sid=call_data["call_id"])
 
 
 if __name__ == "__main__":
