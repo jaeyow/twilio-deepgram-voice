@@ -20,7 +20,7 @@ Let's get into it.
 
 ## What We're Building
 
-Here's the end result: you'll have a phone number. When someone calls it, an AI bot picks up, introduces itself, and has a natural voice conversation with the caller. When the call ends, a recording of the whole conversation is saved automatically.
+Here's the end result: you'll have a phone number. When someone calls it, an AI bot picks up, introduces itself, and has a natural voice conversation with the caller.
 
 Under the hood, the flow looks like this:
 
@@ -94,7 +94,7 @@ All of this happens fast - typically under a second from when you finish talking
 
 **Step 6: The conversation continues.** The bot keeps the full conversation history in memory for the duration of the call, so it remembers what you said earlier. (Each call starts fresh - it doesn't remember previous calls.) If you go quiet for too long (5 seconds), the bot will take the initiative and continue the conversation on its own.
 
-**Step 7: Recording.** Throughout the entire call, all the audio is being saved in a buffer. When the call ends - whether the caller hangs up or the connection drops - the bot saves the entire conversation as a WAV file. A quick note: this recording is done here just for experimentation - to let you listen back and see how the bot performed. In a real application, you wouldn't need to do this yourself. Twilio has [built-in call recording](https://www.twilio.com/docs/voice/tutorials/how-to-record-phone-calls) that handles it for you, with none of the memory overhead.
+**Step 7: Recording.** The bot kicks off a [Twilio-side recording](https://www.twilio.com/docs/voice/tutorials/how-to-record-phone-calls) via the REST API as soon as the call connects. Twilio records in dual-channel (one channel per participant), so you get clean, separated audio without any memory overhead in your application. Recordings are stored in your Twilio account and accessible from the [Twilio Console](https://console.twilio.com/) or via the API.
 
 ## Setting Up Your Own
 
@@ -171,7 +171,7 @@ export PROXY_HOST=your-tunnel-hostname
 docker compose up --build
 ```
 
-Point your Twilio webhook to the tunnel URL instead of the Modal URL, and everything works the same way. Recordings get saved to a `./recordings/` folder on your machine. See the [repo's README](https://github.com/jaeyow/twilio-chatbot/tree/main/inbound) for the full Docker setup details.
+Point your Twilio webhook to the tunnel URL instead of the Modal URL, and everything works the same way. See the [repo's README](https://github.com/jaeyow/twilio-chatbot/tree/main/inbound) for the full Docker setup details.
 
 ## Giving Your Bot a Personality
 
@@ -185,19 +185,7 @@ You can also change the **voice**. We use Deepgram's "aura-2-theia-en" voice (a 
 
 One more thing worth mentioning: if the caller goes quiet for more than 5 seconds, the bot doesn't just sit there in awkward silence. It takes the lead and continues the conversation. In our case, Miss Harper keeps teaching. You can adjust this timeout or change what the bot says when it kicks in.
 
-## Recordings and What's Next
-
-Every call is automatically recorded and saved as a WAV file. If you deployed to Modal, the recordings are stored in a [Modal Volume](https://modal.com/docs/guide/volumes) called `pipecat-recordings`. You can access them with:
-
-```sh
-# List your recordings
-modal volume ls pipecat-recordings
-
-# Download one
-modal volume get pipecat-recordings recording_20260207_142530.wav .
-```
-
-This is useful for reviewing conversations, debugging, or building a dataset.
+## What's Next
 
 ---
 

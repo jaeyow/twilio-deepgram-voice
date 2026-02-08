@@ -31,7 +31,7 @@ Phone Call <-> Twilio <-> Media Streams (WebSocket) <-> Modal <-> Pipecat <-> AI
 
 - RNNoise filter for background noise suppression
 - 8kHz sample rate (Twilio telephony standard)
-- Call recordings saved as WAV files to a Modal Volume
+- Call recordings handled by Twilio (dual-channel, accessible via Twilio Console or API)
 
 ## Prerequisites
 
@@ -150,34 +150,16 @@ cd inbound
 docker build -t twilio-inbound-bot .
 docker run --rm \
   --env-file .env \
-  -e RECORDINGS_DIR=/recordings \
-  -v "$(pwd)/recordings:/recordings" \
   -p 7860:7860 \
   twilio-inbound-bot \
   --transport twilio --host 0.0.0.0 --proxy <tunnel-name>-7860-<region>.devtunnels.ms
 ```
-
-### Recordings
-
-When running with Docker, recordings are saved to the `./recordings/` directory on your host machine (mounted as a volume).
 
 ### Notes
 
 - VS Code dev tunnel URLs are stable for your account, so you won't need to update the Twilio webhook URL between sessions.
 - The port visibility **must** be set to **Public**. The default "Private" requires authentication, which Twilio cannot provide.
 - The `--proxy` flag tells Pipecat's runner what public hostname to embed in the TwiML response for the WebSocket stream URL. This is different from Modal, where the `modal_app.py` reads the hostname from the incoming request headers.
-
-## Recordings (Modal)
-
-Call recordings are saved as WAV files to a Modal Volume (`pipecat-recordings`).
-
-```sh
-# List recordings
-modal volume ls pipecat-recordings
-
-# Download a recording
-modal volume get pipecat-recordings <filename>.wav .
-```
 
 ## Project Structure
 
