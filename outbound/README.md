@@ -98,6 +98,8 @@ cd scripts
 uv run python test_call.py https://<workspace>--twilio-outbound-bot-serve.modal.run
 ```
 
+> **Tip:** You must run from inside the `scripts/` directory so `uv` picks up its `pyproject.toml` (which includes `httpx`). Alternatively, from the repo root: `uv run --with httpx python scripts/test_call.py https://<workspace>--twilio-outbound-bot-serve.modal.run`
+
 Or with curl:
 
 ```sh
@@ -153,6 +155,8 @@ With the server running, initiate a call using the test script (reads `TO_NUMBER
 cd scripts
 uv run python test_call.py
 ```
+
+> **Tip:** Run from the `scripts/` directory, or use `uv run --with httpx python scripts/test_call.py` from the repo root.
 
 Or with curl:
 

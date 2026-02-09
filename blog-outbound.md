@@ -109,7 +109,7 @@ graph LR
 
 The main difference is the **system prompt**. Since the bot is the one making the call, it needs to introduce itself and explain why it's calling - you wouldn't want it to just sit there waiting for the other person to speak first. The prompt tells the bot:
 
-> "You are a friendly assistant making an outbound phone call. Your responses will be read aloud, so keep them concise and conversational. Avoid special characters or formatting. Begin by politely greeting the person and explaining why you're calling."
+> "You are Amelia, a friendly sales assistant making an outbound phone call to check on a customer's order. Your responses will be read aloud, so keep them concise and conversational. Avoid special characters or formatting. Begin by politely greeting the person and explaining why you're calling."
 
 And just like the inbound bot, if the person goes quiet for more than 5 seconds, the bot picks up the conversation and keeps things moving.
 
@@ -154,17 +154,9 @@ Notice something? With the inbound bot, you had to configure a webhook in the [T
 
 ### Recordings
 
-Every call is automatically recorded and saved as a WAV file. If you deployed to Modal, the recordings are stored in a [Modal Volume](https://modal.com/docs/guide/volumes) called `pipecat-recordings`. You can access them with:
+Every call is automatically recorded using [Twilio's built-in call recording](https://www.twilio.com/docs/voice/tutorials/how-to-record-phone-calls). When the WebSocket connects, the bot starts a dual-channel recording via the [Twilio REST API](https://www.twilio.com/docs/voice/api/recording-resource). Recordings are stored in your Twilio account and accessible through the [Twilio Console](https://console.twilio.com/) or API — no application-level storage needed.
 
-```sh
-# List your recordings
-modal volume ls pipecat-recordings
-
-# Download one
-modal volume get pipecat-recordings recording_20260207_142530.wav .
-```
-
-A quick note: this recording is done here just for experimentation - to let you listen back and see how the bot performed. In a real application, you wouldn't need to do this yourself. Twilio has [built-in call recording](https://www.twilio.com/docs/voice/tutorials/how-to-record-phone-calls) that handles it for you, with none of the memory overhead.
+This keeps things simple: no recording files to manage, no volumes to mount, and Twilio handles the audio encoding and storage for you.
 
 ## Running Locally with Docker
 
@@ -180,19 +172,22 @@ The solution is a **tunnel** - a tool that gives your local machine a temporary 
 2. Forward port **7860** and set it to **Public** (Twilio can't use authenticated tunnels)
 3. Copy the forwarded address - it'll look like `https://something-7860-region.devtunnels.ms`
 
+Then set `LOCAL_SERVER_URL` in your `.env` to the tunnel URL:
+
+```
+LOCAL_SERVER_URL=https://something-7860-region.devtunnels.ms
+```
+
 Now run the bot:
 
 ```sh
 cd outbound
-export PROXY_HOST=something-7860-region.devtunnels.ms
 docker compose up --build
 ```
 
-The `PROXY_HOST` variable is important - it tells the bot what public URL to put in the [TwiML](https://www.twilio.com/docs/voice/twiml) response so Twilio knows where to open the WebSocket. Without it, Twilio would try to connect to `localhost`, which obviously won't work.
+The `LOCAL_SERVER_URL` variable is important - it tells the bot what public URL to use when telling Twilio where to fetch [TwiML](https://www.twilio.com/docs/voice/twiml) and where to open the WebSocket. Without it, Twilio would try to connect to `localhost`, which obviously won't work.
 
-Once the container is running, you can trigger calls the same way - just point the curl command at your tunnel URL instead of the Modal URL.
-
-Recordings in Docker mode get saved to a `./recordings/` folder on your machine (mounted as a Docker volume), so you can listen to them right away. See the [repo's README](https://github.com/jaeyow/twilio-chatbot/tree/main/outbound) for the full Docker setup details.
+Once the container is running, you can trigger calls the same way - just point the curl command or test script at your tunnel URL instead of the Modal URL. See the [repo's README](https://github.com/jaeyow/twilio-chatbot/tree/main/outbound) for the full Docker setup details.
 
 ## Wrapping Up
 
