@@ -4,13 +4,9 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
-import asyncio
-import datetime
-import io
 import os
-import wave
 
-import aiofiles
+import aiohttp
 from deepgram import LiveOptions
 from dotenv import load_dotenv
 from loguru import logger
@@ -28,7 +24,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
@@ -50,34 +45,42 @@ load_dotenv(override=True)
 logger.disable("pipecat.services.stt_service")
 
 
-async def save_audio(audio: bytes, sample_rate: int, num_channels: int):
-    if len(audio) > 0:
-        recordings_dir = os.getenv("RECORDINGS_DIR", "/recordings")
-        os.makedirs(recordings_dir, exist_ok=True)
+async def start_twilio_recording(call_sid: str):
+    """Start a Twilio-side recording for the given call via the REST API.
 
-        filename = f"recording_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        filepath = os.path.join(recordings_dir, filename)
+    Recordings are stored in your Twilio account and accessible via the console or API.
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 
-        try:
-            with io.BytesIO() as buffer:
-                with wave.open(buffer, "wb") as wf:
-                    wf.setsampwidth(2)
-                    wf.setnchannels(num_channels)
-                    wf.setframerate(sample_rate)
-                    wf.writeframes(audio)
-                buffer_value = buffer.getvalue()
+    if not account_sid or not auth_token:
+        logger.warning("Missing Twilio credentials, cannot start recording")
+        return
 
-            async with aiofiles.open(filepath, "wb") as file:
-                await file.write(buffer_value)
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}/Recordings.json"
 
-            logger.info(f"Merged audio saved to {filepath} ({len(audio)} bytes)")
-        except Exception as e:
-            logger.error(f"Failed to save audio to {filepath}: {e}")
-    else:
-        logger.info("No audio data to save")
+    try:
+        auth = aiohttp.BasicAuth(account_sid, auth_token)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                auth=auth,
+                data={"RecordingChannels": "dual"},
+            ) as response:
+                if response.status not in (200, 201):
+                    error_text = await response.text()
+                    logger.error(f"Twilio recording API error ({response.status}): {error_text}")
+                    return
+
+                data = await response.json()
+                logger.info(f"Twilio recording started: SID={data.get('sid')}")
+
+    except Exception as e:
+        logger.error(f"Error starting Twilio recording: {e}")
 
 
-async def run_bot(transport: BaseTransport, handle_sigint: bool):
+async def run_bot(transport: BaseTransport, handle_sigint: bool, call_sid: str = ""):
     llm = GroqLLMService(api_key=os.getenv("GROQ_API_KEY"))
 
     stt = DeepgramSTTService(
@@ -117,8 +120,6 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
         ),
     )
 
-    audiobuffer = AudioBufferProcessor()
-
     pipeline = Pipeline(
         [
             transport.input(),  # Websocket input from client
@@ -127,7 +128,6 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
             llm,  # LLM
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
-            audiobuffer,  # Used to buffer the audio in the pipeline
             assistant_aggregator,
         ]
     )
@@ -144,9 +144,10 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        logger.info("Starting audio recording...")
-        await audiobuffer.start_recording()
-        # Kick off the outbound conversation
+        # Start Twilio-level recording.
+        if call_sid:
+            await start_twilio_recording(call_sid)
+        # Kick off the outbound conversation.
         messages.append({"role": "system", "content": "Greet the person and introduce yourself."})
         await task.queue_frames([LLMRunFrame()])
 
@@ -158,13 +159,7 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info("Outbound call ended, saving final recording...")
-        if audiobuffer.has_audio():
-            audio = audiobuffer.merge_audio_buffers()
-            await asyncio.shield(
-                save_audio(audio, audiobuffer.sample_rate, audiobuffer.num_channels)
-            )
-        await audiobuffer.stop_recording()
+        logger.info("Client disconnected")
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=handle_sigint, force_gc=True)
@@ -207,4 +202,4 @@ async def bot(runner_args: RunnerArguments):
 
     handle_sigint = runner_args.handle_sigint
 
-    await run_bot(transport, handle_sigint)
+    await run_bot(transport, handle_sigint, call_sid=call_data["call_id"])

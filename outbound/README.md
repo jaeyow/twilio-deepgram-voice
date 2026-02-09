@@ -33,7 +33,7 @@ TwiML fetched → WebSocket connection → Bot conversation
 
 - RNNoise filter for background noise suppression
 - 8kHz sample rate (Twilio telephony standard)
-- Call recordings saved as WAV files
+- Call recordings handled by Twilio (dual-channel, accessible via Twilio Console or API)
 
 ## Prerequisites
 
@@ -111,18 +111,6 @@ curl -X POST https://<workspace>--twilio-outbound-bot-serve.modal.run/dialout \
 
 > Note: the `from_number` must be a phone number owned by your Twilio account.
 
-### Recordings (Modal)
-
-Call recordings are saved as WAV files to a Modal Volume (`pipecat-recordings`).
-
-```sh
-# List recordings
-modal volume ls pipecat-recordings
-
-# Download a recording
-modal volume get pipecat-recordings <filename>.wav .
-```
-
 ## Docker Deployment
 
 Since Twilio needs a publicly reachable URL to send webhooks and media streams, you'll need a tunnel. VS Code has built-in [dev tunnels](https://code.visualstudio.com/docs/editor/port-forwarding) that work well for this.
@@ -188,15 +176,9 @@ cd outbound
 docker build -t twilio-outbound-bot .
 docker run --rm \
   --env-file .env \
-  -e RECORDINGS_DIR=/recordings \
-  -v "$(pwd)/recordings:/recordings" \
   -p 7860:7860 \
   twilio-outbound-bot
 ```
-
-### Recordings
-
-When running with Docker, recordings are saved to the `./recordings/` directory on your host machine (mounted as a volume).
 
 ### Notes
 

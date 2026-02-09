@@ -24,7 +24,6 @@ image = (
         "pipecat-ai[websocket,groq,silero,deepgram,rnnoise,runner,local-smart-turn-v3]>=0.0.99",
         "pipecatcloud>=0.2.18",
         "twilio",
-        "aiofiles",
         "python-dotenv",
         "requests",
     )
@@ -36,8 +35,6 @@ image = (
 # Modal resources
 # ---------------------------------------------------------------------------
 
-recordings_vol = modal.Volume.from_name("pipecat-recordings", create_if_missing=True)
-
 app = modal.App("twilio-outbound-bot")
 
 # ---------------------------------------------------------------------------
@@ -48,9 +45,9 @@ app = modal.App("twilio-outbound-bot")
 @app.function(
     image=image,
     secrets=[modal.Secret.from_dotenv(__file__)],
-    volumes={"/recordings": recordings_vol},
     scaledown_window=300,
     timeout=600,
+    keep_warm=0,
 )
 @modal.asgi_app()
 def serve():
@@ -144,7 +141,5 @@ def serve():
         except Exception as e:
             logger.error(f"Error in bot pipeline: {type(e).__name__}: {e}")
             logger.error(traceback.format_exc())
-        finally:
-            recordings_vol.commit()
 
     return web_app
