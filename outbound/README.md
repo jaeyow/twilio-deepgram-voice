@@ -33,7 +33,7 @@ TwiML fetched → WebSocket connection → Bot conversation
 
 - RNNoise filter for background noise suppression
 - 8kHz sample rate (Twilio telephony standard)
-- Call recordings saved as WAV files
+- Call recordings handled by Twilio (dual-channel, accessible via Twilio Console or API)
 
 ## Prerequisites
 
@@ -98,6 +98,8 @@ cd scripts
 uv run python test_call.py https://<workspace>--twilio-outbound-bot-serve.modal.run
 ```
 
+> **Tip:** You must run from inside the `scripts/` directory so `uv` picks up its `pyproject.toml` (which includes `httpx`). Alternatively, from the repo root: `uv run --with httpx python scripts/test_call.py https://<workspace>--twilio-outbound-bot-serve.modal.run`
+
 Or with curl:
 
 ```sh
@@ -110,18 +112,6 @@ curl -X POST https://<workspace>--twilio-outbound-bot-serve.modal.run/dialout \
 ```
 
 > Note: the `from_number` must be a phone number owned by your Twilio account.
-
-### Recordings (Modal)
-
-Call recordings are saved as WAV files to a Modal Volume (`pipecat-recordings`).
-
-```sh
-# List recordings
-modal volume ls pipecat-recordings
-
-# Download a recording
-modal volume get pipecat-recordings <filename>.wav .
-```
 
 ## Docker Deployment
 
@@ -166,6 +156,8 @@ cd scripts
 uv run python test_call.py
 ```
 
+> **Tip:** Run from the `scripts/` directory, or use `uv run --with httpx python scripts/test_call.py` from the repo root.
+
 Or with curl:
 
 ```sh
@@ -188,15 +180,9 @@ cd outbound
 docker build -t twilio-outbound-bot .
 docker run --rm \
   --env-file .env \
-  -e RECORDINGS_DIR=/recordings \
-  -v "$(pwd)/recordings:/recordings" \
   -p 7860:7860 \
   twilio-outbound-bot
 ```
-
-### Recordings
-
-When running with Docker, recordings are saved to the `./recordings/` directory on your host machine (mounted as a volume).
 
 ### Notes
 
