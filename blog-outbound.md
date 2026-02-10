@@ -77,7 +77,7 @@ This is the same WebSocket endpoint from the inbound bot. Once it's open, audio 
 Here's the whole flow as a diagram:
 
 ```mermaid
-graph TD
+graph LR
     A["📤 You send POST /dialout"] --> B["📞 Server tells Twilio<br/>to call the number"]
     B --> C["🔔 Phone rings...<br/>person picks up"]
     C --> D["📋 Twilio fetches<br/>POST /twiml"]
@@ -103,7 +103,7 @@ graph LR
 
 - **[Deepgram](https://deepgram.com/) [nova-3](https://deepgram.com/learn/nova-3-speech-to-text-api)** for speech-to-text (turning what the person says into text)
 - **[Groq](https://groq.com/) with [Llama 3.3 70B](https://www.llama.com/)** for generating responses
-- **[Deepgram](https://deepgram.com/) Theia** voice for text-to-speech (turning the response back into natural-sounding audio)
+- **[Deepgram](https://deepgram.com/) Amalthea** voice for text-to-speech (turning the response back into natural-sounding audio with a Filipino English accent)
 - **[RNNoise](https://jmvalin.ca/demo/rnnoise/)** for cleaning up background noise
 - **[Silero](https://github.com/snakers4/silero-vad) VAD + Smart Turn v3** for knowing when the person has finished talking
 

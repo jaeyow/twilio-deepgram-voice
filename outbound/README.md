@@ -26,7 +26,7 @@ TwiML fetched → WebSocket connection → Bot conversation
 |---------|----------|-------|
 | LLM | Groq | llama-3.3-70b-versatile |
 | STT | Deepgram | nova-3 |
-| TTS | Deepgram | aura-2-theia-en |
+| TTS | Deepgram | aura-2-amalthea-en |
 | VAD | Silero | + Smart Turn v3 (ML-based end-of-turn detection) |
 
 ### Audio Processing
