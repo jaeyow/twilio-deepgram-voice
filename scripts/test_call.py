@@ -41,7 +41,7 @@ def main():
     print(f"Calling {to_number} from {from_number}...")
     print(f"POST {url}")
 
-    response = httpx.post(url, json=payload)
+    response = httpx.post(url, json=payload, timeout=30)
 
     if response.status_code == 200:
         data = response.json()
