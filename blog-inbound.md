@@ -114,7 +114,7 @@ You'll need accounts with four services. All of them have free tiers, and a hand
 First, install the Modal CLI and set it up:
 
 ```sh
-pip install modal
+uv tool install modal
 modal setup
 ```
 

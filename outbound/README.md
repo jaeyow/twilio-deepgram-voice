@@ -75,7 +75,7 @@ Modal provides a serverless cloud deployment. The Modal app dynamically derives 
 ### 1. Install the Modal CLI
 
 ```sh
-pip install modal
+uv tool install modal
 modal setup
 ```
 

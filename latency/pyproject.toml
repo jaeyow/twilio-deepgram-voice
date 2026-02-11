@@ -1,0 +1,22 @@
+[project]
+name = "twilio-chatbot-latency"
+version = "0.1.0"
+description = "Twilio voice bot with latency instrumentation using Pipecat observers"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pipecat-ai[websocket,groq,silero,deepgram,rnnoise,runner,local-smart-turn-v3]>=0.0.99",
+    "pipecatcloud>=0.2.18",
+    "requests",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.404,<2",
+    "ruff>=0.12.11,<1",
+]
+
+[tool.ruff]
+line-length = 100
+[tool.ruff.lint]
+select = ["I"]
