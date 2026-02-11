@@ -12,6 +12,10 @@ Handles incoming phone calls. Users call your Twilio number and interact with a 
 
 Initiates outbound phone calls programmatically where your bot calls users. Deployable to [Modal](https://modal.com) or locally via Docker Compose.
 
+### [Latency Instrumentation](./latency/)
+
+Measures voice-to-voice latency using Pipecat's observer system. Breaks down per-component TTFB (STT, Smart Turn, LLM, TTS) into a per-turn summary table. Built on the inbound bot.
+
 ## Architecture
 
 ```
@@ -33,6 +37,7 @@ Each bot has its own README with setup and deployment instructions:
 
 - [Inbound setup](./inbound/README.md) — Modal deployment
 - [Outbound setup](./outbound/README.md) — Modal or Docker deployment
+- [Latency setup](./latency/README.md) — Modal or Docker deployment
 
 ## Links
 

@@ -45,7 +45,7 @@ Phone Call <-> Twilio <-> Media Streams (WebSocket) <-> Modal <-> Pipecat <-> AI
 1. Install the Modal CLI:
 
    ```sh
-   pip install modal
+   uv tool install modal
    modal setup
    ```
 
