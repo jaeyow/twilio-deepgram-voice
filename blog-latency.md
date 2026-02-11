@@ -2,7 +2,7 @@
 
 After building the [inbound](https://github.com/jaeyow/twilio-chatbot/tree/main/inbound) and [outbound](https://github.com/jaeyow/twilio-chatbot/tree/main/outbound) voice bots, I kept coming back to the same question: *how fast is this thing, really?*
 
-I could feel it during calls. You stop talking, there's a beat, and then the bot responds. It felt like maybe a second and a half. Not bad - definitely fast enough to have a conversation. But "it feels like about a second and a half" isn't a measurement. And if I wanted to make it faster, I needed to know where that time was actually going.
+I could feel it during calls. You stop talking, there's a beat, and then the bot responds. It felt like maybe a second. Not bad - definitely fast enough to have a conversation. But "it feels like about a second" isn't a measurement. And if I wanted to make it faster, I needed to know where that time was actually going.
 
 Is it the speech recognition? The LLM thinking? The text-to-speech? The network round-trips between all these services? Without numbers, I'd just be guessing.
 
@@ -73,28 +73,28 @@ That's it. No other changes. The pipeline runs exactly the same as before - the 
 Now when I made a test call, the logs lit up with data I'd never seen before:
 
 ```
-DEBUG | 📊 [DeepgramSTTService#0] TTFB (nova-3): 0.182s at 14.231s
-DEBUG | 📊 [LocalSmartTurnAnalyzerV3#0] SMART TURN: COMPLETE (probability: 94.20%, inference: 12.3ms, server: 15.1ms, e2e: 212.4ms) at 14.413s
-DEBUG | 📊 [GroqLLMService#0] TTFB (llama-3.3-70b-versatile): 0.078s at 14.491s
-DEBUG | 📊 [GroqLLMService#0] LLM TOKEN USAGE (llama-3.3-70b-versatile): prompt: 156, completion: 42, total: 198 at 14.89s
-DEBUG | 📊 [DeepgramTTSService#0] TTFB (aura-2-theia-en): 0.035s at 14.526s
-DEBUG | 📊 [DeepgramTTSService#0] TTS USAGE (aura-2-theia-en): 124 characters at 14.89s
-DEBUG | ⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING: 1.432s
+DEBUG | 📊 [DeepgramSTTService#0] TTFB (nova-3): 0.200s at 14.231s
+DEBUG | 📊 [LocalSmartTurnAnalyzerV3#0] SMART TURN: COMPLETE (probability: 95.10%, inference: 11.2ms, server: 14.8ms, e2e: 91.3ms) at 14.322s
+DEBUG | 📊 [GroqLLMService#0] TTFB (llama-3.3-70b-versatile): 0.268s at 14.590s
+DEBUG | 📊 [GroqLLMService#0] LLM TOKEN USAGE (llama-3.3-70b-versatile): prompt: 290, completion: 17, total: 307 at 14.95s
+DEBUG | 📊 [DeepgramTTSService#0] TTFB (aura-2-theia-en): 0.044s at 14.634s
+DEBUG | 📊 [DeepgramTTSService#0] TTS USAGE (aura-2-theia-en): 32 characters at 14.95s
+DEBUG | ⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING: 0.976s
 ```
 
 Let me break down what each line means:
 
-- **STT TTFB: 0.182s** - Deepgram took 182 milliseconds to return the first word of the transcription after receiving audio
-- **Smart Turn: 212.4ms e2e** - The turn detection model took 212ms to decide (with 94.2% confidence) that I was actually done speaking, not just pausing
-- **LLM TTFB: 0.078s** - Groq took just 78 milliseconds to start generating the first token of the response. That's fast.
-- **LLM Token Usage: 156 prompt / 42 completion** - The context size and response length for this turn
-- **TTS TTFB: 0.035s** - Deepgram's TTS took 35 milliseconds to start producing audio from the first text it received
-- **Total latency: 1.432s** - The wall-clock time from when I stopped talking to when I heard the bot start responding
+- **STT TTFB: 0.200s** - Deepgram took 200 milliseconds to return the first word of the transcription after receiving audio
+- **Smart Turn: 91.3ms e2e** - The turn detection model took 91ms to decide (with 95.1% confidence) that I was actually done speaking, not just pausing
+- **LLM TTFB: 0.268s** - Groq took 268 milliseconds to start generating the first token of the response
+- **LLM Token Usage: 290 prompt / 17 completion** - The context size and response length for this turn
+- **TTS TTFB: 0.044s** - Deepgram's TTS took 44 milliseconds to start producing audio from the first text it received
+- **Total latency: 0.976s** - The wall-clock time from when I stopped talking to when I heard the bot start responding
 
 At the end of the call, `UserBotLatencyLogObserver` printed a summary:
 
 ```
-INFO | ⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING - Avg: 1.432s, Min: 1.234s, Max: 1.687s
+INFO | ⏱️ LATENCY FROM USER STOPPED SPEAKING TO BOT STARTED SPEAKING - Avg: 1.048s, Min: 0.976s, Max: 1.159s
 ```
 
 This was already revealing. But I wanted more detail - specifically, I wanted to see the breakdown *per turn* in a single table, so I could spot patterns across a conversation.
@@ -165,7 +165,7 @@ task = PipelineTask(
 )
 ```
 
-## The Numbers: Where Does 1.5 Seconds Go?
+## The Numbers: Where Does 1 Second Go?
 
 Here's what the summary table looks like after a real call. This is the payoff - the table prints to the logs when the call ends:
 
@@ -173,35 +173,37 @@ Here's what the summary table looks like after a real call. This is the payoff -
 === LATENCY BREAKDOWN (4 turns) ===
 Turn | Total  | STT TTFB | Smart Turn | LLM TTFB | TTS TTFB | LLM Tokens | TTS Chars
 -----+--------+----------+------------+----------+----------+------------+----------
-   1 | 1.420s |   0.182s |      210ms |   0.078s |   0.035s |    156/42  |      124
-   2 | 1.310s |   0.155s |      195ms |   0.072s |   0.031s |    198/38  |      108
-   3 | 1.550s |   0.220s |      230ms |   0.085s |   0.042s |    240/55  |      156
-   4 | 1.280s |   0.148s |      188ms |   0.068s |   0.029s |    282/32  |       89
+   2 | 0.976s |   0.200s |       91ms |   0.268s |   0.044s |     290/17 |       32
+   3 | 1.001s |   0.266s |       82ms |   0.268s |   0.029s |     323/33 |      111
+   4 | 1.057s |   0.155s |       84ms |   0.268s |   0.013s |     388/84 |      228
+   6 | 1.159s |   0.157s |       81ms |   0.271s |   0.006s |     504/33 |       13
 -----+--------+----------+------------+----------+----------+------------+----------
- Avg | 1.390s |   0.176s |      206ms |   0.076s |   0.034s |            |
+ Avg | 1.048s |   0.195s |       84ms |   0.268s |   0.023s |            |
 ```
 
 A few things jump out immediately.
 
-**Groq is not the bottleneck.** At 76ms average TTFB for a 70B parameter model, Groq is absurdly fast. If you're worried about LLM latency being the problem, it's not - at least not with Groq.
+**The LLM is now the slowest component.** At 268ms average TTFB, the LLM takes more time than any other service. This is still a 70B parameter model running on Groq, but it's notably slower than the sub-100ms performance you might expect. This could be due to API queuing, model load, or the specific context size.
 
-**The AI services combined take about 500ms.** Add up the averages: STT (176ms) + Smart Turn (206ms) + LLM (76ms) + TTS (34ms) = roughly 490ms. That's the time these services spend doing their thing.
+**The AI services combined take about 570ms.** Add up the averages: STT (195ms) + Smart Turn (84ms) + LLM (268ms) + TTS (23ms) = roughly 570ms. That's the time these services spend doing their thing.
 
-**So where's the other 900ms?** The total averages 1.39 seconds, but only ~490ms is accounted for by service TTFB. The rest is pipeline overhead: network round-trips between your server and each external API (Twilio to Modal, Modal to Deepgram, Modal to Groq, Modal to Deepgram again), audio buffering, frame serialisation, and the VAD's own silence detection window before `VADUserStoppedSpeakingFrame` even fires.
+**So where's the other 480ms?** The total averages 1.048 seconds, but only ~570ms is accounted for by service TTFB. The rest is pipeline overhead: network round-trips between your server and each external API (Twilio to Modal, Modal to Deepgram, Modal to Groq, Modal to Deepgram again), audio buffering, frame serialisation, and the VAD's own silence detection window before `VADUserStoppedSpeakingFrame` even fires.
 
-**Turn 3 was slower.** The LLM had to generate a longer response (55 completion tokens vs. 32-42 for other turns), which also meant more TTS characters and slightly higher TTS TTFB. Longer responses take longer - not surprising, but now you can see it in the data.
+**Turn 4 generated the longest response.** With 84 completion tokens and 228 TTS characters, it had the most content to generate. Interestingly, the LLM TTFB stayed constant at 268ms regardless of response length - time to first token doesn't depend on how many tokens will eventually be generated.
 
-**Context grows, but TTFB stays flat.** Notice how the prompt token count grows from 156 to 282 across the conversation (each turn adds to the context), but LLM TTFB barely changes (78ms to 68ms). Groq's inference speed doesn't degrade meaningfully with context size at this scale.
+**Context grows, but TTFB stays remarkably flat.** Notice how the prompt token count grows from 290 to 504 across the conversation (each turn adds to the context), but LLM TTFB barely changes (268ms to 271ms). Despite doubling the context size, inference latency remains essentially constant.
 
 ## What Would Actually Make It Faster?
 
 Now that we have numbers, we can think about optimisation rationally instead of guessing.
 
-**The biggest single lever is the VAD and turn detection.** The Smart Turn model takes ~200ms to decide you're done talking, and the VAD has a `stop_secs=0.5` parameter that adds 500ms of silence detection before it even triggers. Together, that's roughly 700ms just to establish that you've finished your sentence. You could lower `stop_secs` from 0.5 to 0.3 to shave off 200ms, but you'd get more false positives - the bot would start responding while you're still mid-sentence. It's a tuning tradeoff.
+**The LLM is the biggest opportunity.** At 268ms average TTFB, the LLM accounts for over 25% of the total latency. This could potentially be improved by using a smaller/faster model, ensuring optimal Groq API configuration, or exploring self-hosted LLM inference with a model optimized for low latency. The question is whether faster inference would compromise response quality.
 
-**Network round-trips are the other big factor.** Every external API call adds a round-trip: your server to Deepgram for STT, to Groq for the LLM, to Deepgram again for TTS, plus the Twilio-to-server leg. If your Modal deployment is in `us-east` and your API services are nearby, round-trips are fast. If there's geographic distance, it adds up. Self-hosting these services (running your own STT, LLM, and TTS on the same infrastructure) could eliminate these round-trips entirely - something I'm planning to explore next.
+**Network round-trips and pipeline overhead matter.** About 480ms (nearly half the total latency) is spent on overhead: network round-trips between your server and each external API (Twilio to Modal, Modal to Deepgram, Modal to Groq, Modal to Deepgram again), audio buffering, frame serialisation, and the VAD's own silence detection window before `VADUserStoppedSpeakingFrame` even fires. Self-hosting these services on the same infrastructure could eliminate many of these round-trips.
 
-**The AI services themselves are already fast.** Groq at 76ms and Deepgram TTS at 34ms are hard to beat. Deepgram STT at 176ms is decent, though switching to a smaller model (like `nova-2`) might save 20-30ms at the cost of accuracy. The question is whether shaving 20ms off STT is worth lower transcription quality - probably not.
+**Smart Turn is surprisingly fast.** At just 84ms average, the turn detection is much faster than expected and not a bottleneck. The VAD's `stop_secs` parameter (likely set to around 0.3-0.5s) adds some additional latency, but further reduction would risk more false positives.
+
+**STT and TTS are well-optimized.** Deepgram STT at 195ms and TTS at 23ms are both performing well. There's not much to gain here without sacrificing quality.
 
 ## Try It Yourself
 
