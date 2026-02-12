@@ -16,6 +16,10 @@ Initiates outbound phone calls programmatically where your bot calls users. Depl
 
 Measures voice-to-voice latency using Pipecat's observer system. Breaks down per-component TTFB (STT, Smart Turn, LLM, TTS) into a per-turn summary table. Built on the inbound bot.
 
+### [Function Calling](./function-calling/)
+
+Extends Miss Harper with LLM function calling - enabling her to take actions mid-conversation like checking schedules, looking up word definitions via external APIs, and sending lesson summaries via SMS. Demonstrates three tool patterns: mock data, external API calls, and side effects.
+
 ## Architecture
 
 ```
@@ -38,6 +42,7 @@ Each bot has its own README with setup and deployment instructions:
 - [Inbound setup](./inbound/README.md) — Modal deployment
 - [Outbound setup](./outbound/README.md) — Modal or Docker deployment
 - [Latency setup](./latency/README.md) — Modal or Docker deployment
+- [Function Calling setup](./function-calling/README.md) — Modal or Docker deployment
 
 ## Links
 
