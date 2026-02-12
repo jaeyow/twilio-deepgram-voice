@@ -49,9 +49,15 @@ Same three observers as the [latency bot](../latency/), producing identical outp
 
 ## Prerequisites
 
+**For Modal deployment:**
 - A [Twilio](https://www.twilio.com/) account with a phone number that supports voice calls
 - A [HuggingFace](https://huggingface.co/) account with access to [meta-llama/Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct) (gated model)
 - [Modal](https://modal.com/) CLI installed and authenticated
+
+**For Docker (local) deployment:**
+- A [Twilio](https://www.twilio.com/) account with a phone number that supports voice calls
+- [Docker](https://docs.docker.com/get-docker/) (and Docker Compose)
+- [VS Code](https://code.visualstudio.com/) with a GitHub or Microsoft account (for dev tunnels)
 
 ## Setup
 
@@ -131,17 +137,80 @@ modal deploy modal_app.py   # production (permanent URL)
 
 Set your Twilio phone number's incoming call webhook to the bot's Modal URL (POST method), the same way as the [inbound bot](../inbound/README.md#configure-twilio).
 
+## Docker Deployment (Local)
+
+Run the entire stack locally with Docker Compose. All services run on CPU — no GPU required. This works on Mac (Apple Silicon or Intel) and Linux.
+
+### 1. Create `.env`
+
+```sh
+cd self-hosted
+cp env.example .env
+```
+
+Fill in Twilio credentials only (no HuggingFace token needed — Ollama downloads models directly):
+
+```
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+```
+
+### 2. Forward port 7860 with VS Code dev tunnels
+
+Twilio needs a public URL to send media streams. See the [inbound bot README](../inbound/README.md#docker-deployment) for full dev tunnel setup details.
+
+### 3. Start the stack
+
+```sh
+cd self-hosted
+export PROXY_HOST=<tunnel-name>-7860-<region>.devtunnels.ms
+docker compose up --build
+```
+
+This starts three containers:
+- **ollama** — LLM server (Llama 3.1 8B)
+- **xtts** — TTS server (XTTS v2, running on CPU)
+- **bot** — Pipecat bot with Whisper STT (running on CPU)
+
+### 4. Pull the LLM model (first time only)
+
+In a separate terminal, pull the Llama model into the Ollama container:
+
+```sh
+docker exec self-hosted-ollama-1 ollama pull llama3.1:8b
+```
+
+The model is cached in a Docker volume (`ollama_data`), so this only needs to happen once.
+
+### 5. Configure Twilio
+
+Point your Twilio phone number's incoming call webhook to your dev tunnel URL (POST method).
+
+### Performance on CPU
+
+All services run on CPU in Docker, which is slower than GPU but functional:
+
+| Service | CPU performance |
+|---------|----------------|
+| **Whisper STT** | Slower than GPU but usable. Uses `int8` compute type for speed. |
+| **Ollama LLM** | Runs well on CPU. On Mac, running Ollama natively (outside Docker) gives Metal GPU acceleration. |
+| **XTTS TTS** | Noticeably slower than GPU. Expect higher TTS TTFB. |
+
+For NVIDIA GPU acceleration on Linux, uncomment the `deploy` sections in `docker-compose.yml`.
+
 ## Project Structure
 
 ```
 self-hosted/
-  bot.py              # Bot logic: Whisper STT + vLLM LLM + XTTS TTS + observers
+  bot.py              # Bot logic: Whisper STT + vLLM/Ollama LLM + XTTS TTS + observers
   modal_app.py        # Modal deployment: bot container (T4 GPU)
   modal_vllm.py       # Modal deployment: vLLM server (A10G GPU)
   modal_xtts.py       # Modal deployment: XTTS server (T4 GPU)
   tts_server.py       # FastAPI server implementing XTTS streaming API
   observers.py        # Custom LatencyBreakdownObserver (copied from latency/)
   pyproject.toml      # Python project config and dependencies
-  Dockerfile          # Docker alternative
+  Dockerfile          # Docker image for the bot
+  Dockerfile.xtts     # Docker image for the XTTS server
+  docker-compose.yml  # Local deployment: bot + Ollama + XTTS
   env.example         # Template for .env
 ```

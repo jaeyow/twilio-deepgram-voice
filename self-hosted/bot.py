@@ -118,16 +118,20 @@ async def start_twilio_recording(call_sid: str):
 
 async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool, call_sid: str = ""):
     # --- Self-hosted STT: Faster-Whisper (in-process, no network hop) ---
+    # On Modal (GPU): device=cuda, compute_type=float16
+    # On Docker/local (CPU): device=cpu, compute_type=int8
     stt = WhisperSTTService(
         model=Model.LARGE_V3_TURBO,
-        device="cuda",
-        compute_type="float16",
+        device=os.getenv("WHISPER_DEVICE", "cuda"),
+        compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "float16"),
     )
 
-    # --- Self-hosted LLM: vLLM via OpenAI-compatible API ---
+    # --- Self-hosted LLM: vLLM or Ollama via OpenAI-compatible API ---
+    # On Modal: model=meta-llama/Meta-Llama-3.1-8B-Instruct (HuggingFace name for vLLM)
+    # On Docker/local: model=llama3.1:8b (Ollama name)
     llm = OLLamaLLMService(
-        model="meta-llama/Meta-Llama-3.1-8B-Instruct",
-        base_url=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
+        model=os.getenv("LLM_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct"),
+        base_url=os.getenv("VLLM_BASE_URL", "http://localhost:11434/v1"),
     )
 
     # --- Self-hosted TTS: XTTS v2 streaming server ---

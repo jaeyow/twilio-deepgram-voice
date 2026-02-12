@@ -42,7 +42,13 @@ def load_model():
 
     model = Xtts.init_from_config(config)
     model.load_checkpoint(config, checkpoint_dir=model_dir, use_deepspeed=False)
-    model.cuda()
+
+    # TTS_DEVICE=cuda on Modal/NVIDIA GPU, TTS_DEVICE=cpu for local/Mac Docker
+    device = os.getenv("TTS_DEVICE", "cuda")
+    if device == "cuda" and torch.cuda.is_available():
+        model.cuda()
+    else:
+        print("Running XTTS on CPU (slower, but no GPU required)")
 
     # Load pre-computed studio speaker embeddings
     if os.path.exists(speakers_path):
