@@ -43,10 +43,15 @@ def load_model():
     model = Xtts.init_from_config(config)
     model.load_checkpoint(config, checkpoint_dir=model_dir, use_deepspeed=False)
 
-    # TTS_DEVICE=cuda on Modal/NVIDIA GPU, TTS_DEVICE=cpu for local/Mac Docker
+    # TTS_DEVICE=cuda  — Modal / NVIDIA GPU
+    # TTS_DEVICE=mps   — Native Mac (Apple Silicon Metal GPU)
+    # TTS_DEVICE=cpu   — Docker on Mac, or any CPU-only machine
     device = os.getenv("TTS_DEVICE", "cuda")
     if device == "cuda" and torch.cuda.is_available():
         model.cuda()
+    elif device == "mps" and torch.backends.mps.is_available():
+        model.to("mps")
+        print("Running XTTS on Apple Silicon GPU (MPS)")
     else:
         print("Running XTTS on CPU (slower, but no GPU required)")
 

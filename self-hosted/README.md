@@ -198,6 +198,78 @@ All services run on CPU in Docker, which is slower than GPU but functional:
 
 For NVIDIA GPU acceleration on Linux, uncomment the `deploy` sections in `docker-compose.yml`.
 
+## Native Mac Deployment (Apple Silicon)
+
+Run all services natively on macOS to take advantage of Apple Silicon GPU acceleration. This gives significantly better performance than Docker (which runs on CPU only).
+
+### Prerequisites
+
+- [Ollama](https://ollama.com/) installed natively
+- [uv](https://docs.astral.sh/uv/) for Python dependency management
+- Python 3.12+
+
+### 1. Create `.env`
+
+```sh
+cd self-hosted
+cp env.example .env
+```
+
+Fill in Twilio credentials and set Mac-specific device options:
+
+```
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+WHISPER_DEVICE=mlx
+TTS_DEVICE=mps
+LLM_MODEL=llama3.1:8b
+```
+
+### 2. Start Ollama and pull the model
+
+```sh
+ollama pull llama3.1:8b
+ollama serve   # if not already running as a service
+```
+
+### 3. Start the XTTS server
+
+```sh
+cd self-hosted
+TTS_DEVICE=mps uv run uvicorn tts_server:app --host 0.0.0.0 --port 8001
+```
+
+This uses the Metal Performance Shaders (MPS) backend for GPU-accelerated TTS inference.
+
+### 4. Forward port 7860 with VS Code dev tunnels
+
+Same as the Docker deployment — Twilio needs a public URL. See the [inbound bot README](../inbound/README.md#docker-deployment) for setup details.
+
+### 5. Start the bot
+
+In a separate terminal:
+
+```sh
+cd self-hosted
+export WHISPER_DEVICE=mlx
+export XTTS_BASE_URL=http://localhost:8001
+export VLLM_BASE_URL=http://localhost:11434/v1
+export LLM_MODEL=llama3.1:8b
+uv run python -m pipecat.runner.run --transport twilio --host 0.0.0.0 --proxy <your-dev-tunnel-host>
+```
+
+### 6. Configure Twilio
+
+Point your Twilio phone number's incoming call webhook to your dev tunnel URL (POST method).
+
+### Performance on Apple Silicon
+
+| Service | Mac GPU acceleration |
+|---------|---------------------|
+| **Whisper STT** | Uses MLX framework (`WhisperSTTServiceMLX`). Significantly faster than CPU. |
+| **Ollama LLM** | Native Ollama uses Metal GPU automatically. No extra config needed. |
+| **XTTS TTS** | Uses PyTorch MPS backend (`TTS_DEVICE=mps`). Much faster than CPU. |
+
 ## Project Structure
 
 ```

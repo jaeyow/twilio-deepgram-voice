@@ -118,13 +118,19 @@ async def start_twilio_recording(call_sid: str):
 
 async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool, call_sid: str = ""):
     # --- Self-hosted STT: Faster-Whisper (in-process, no network hop) ---
-    # On Modal (GPU): device=cuda, compute_type=float16
-    # On Docker/local (CPU): device=cpu, compute_type=int8
-    stt = WhisperSTTService(
-        model=Model.LARGE_V3_TURBO,
-        device=os.getenv("WHISPER_DEVICE", "cuda"),
-        compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "float16"),
-    )
+    # WHISPER_DEVICE=cuda   — Modal / NVIDIA GPU (default)
+    # WHISPER_DEVICE=cpu    — Docker on Mac, or any CPU-only machine
+    # WHISPER_DEVICE=mlx    — Native Mac (Apple Silicon, uses MLX framework)
+    whisper_device = os.getenv("WHISPER_DEVICE", "cuda")
+    if whisper_device == "mlx":
+        from pipecat.services.whisper.stt import WhisperSTTServiceMLX, MLXModel
+        stt = WhisperSTTServiceMLX(model=MLXModel.LARGE_V3_TURBO)
+    else:
+        stt = WhisperSTTService(
+            model=Model.LARGE_V3_TURBO,
+            device=whisper_device,
+            compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "float16"),
+        )
 
     # --- Self-hosted LLM: vLLM or Ollama via OpenAI-compatible API ---
     # On Modal: model=meta-llama/Meta-Llama-3.1-8B-Instruct (HuggingFace name for vLLM)
