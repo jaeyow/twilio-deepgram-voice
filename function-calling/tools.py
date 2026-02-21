@@ -6,10 +6,10 @@ Three tools demonstrating different patterns:
   3. send_lesson_summary — real side effect (Twilio SMS)
 """
 
-import json
-
 import aiohttp
 from loguru import logger
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
 
 
@@ -26,12 +26,11 @@ def register_tools(
     so tool functions are self-contained without global state.
     """
 
-    async def get_class_schedule(params: FunctionCallParams):
-        """Get today's class schedule with subjects and times.
-
-        Call this when a student asks about the schedule, what's next,
-        or what subjects are planned for today.
-        """
+    # Use the deprecated 6-parameter style for get_class_schedule.
+    # Groq sends arguments=null for parameter-free tools; pipecat's
+    # DirectFunctionWrapper does **args which crashes on None. The deprecated
+    # 6-param style calls the handler with positional args — no **args involved.
+    async def get_class_schedule(function_name, tool_call_id, arguments, llm, context, result_callback):
         logger.info("Tool called: get_class_schedule")
         schedule = [
             {"time": "9:00 AM", "subject": "Math", "topic": "Multiplication tables"},
@@ -41,7 +40,7 @@ def register_tools(
             {"time": "1:00 PM", "subject": "History", "topic": "Ancient Egypt"},
             {"time": "2:00 PM", "subject": "Art", "topic": "Watercolor painting"},
         ]
-        await params.result_callback(json.dumps(schedule))
+        await result_callback(schedule)
 
     async def lookup_word(params: FunctionCallParams, word: str):
         """Look up the definition of a word in the dictionary.
@@ -118,10 +117,22 @@ def register_tools(
                 "Sorry, there was an error sending the text message."
             )
 
-    llm.register_direct_function(get_class_schedule)
+    llm.register_function("get_class_schedule", get_class_schedule)
     llm.register_direct_function(lookup_word)
     llm.register_direct_function(send_lesson_summary)
 
     logger.info(
         f"Registered 3 tools on LLM (caller: {caller_number or 'unknown'})"
     )
+
+    get_class_schedule_schema = FunctionSchema(
+        name="get_class_schedule",
+        description=(
+            "Get today's class schedule with subjects and times. "
+            "Call this when a student asks about the schedule, what's next, "
+            "or what subjects are planned for today."
+        ),
+        properties={},
+        required=[],
+    )
+    return ToolsSchema(standard_tools=[get_class_schedule_schema, lookup_word, send_lesson_summary])

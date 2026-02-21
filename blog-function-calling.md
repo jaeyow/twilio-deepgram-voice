@@ -120,13 +120,12 @@ This all happens seamlessly in the audio pipeline. The user never hears a pause 
 
 The simplest tool. No external APIs, no side effects. Just return some data.
 
+Here's where I ran into my first gotcha. I originally wrote `get_class_schedule` the same way as the other tools — using `register_direct_function` with a `FunctionCallParams` signature. It looked clean, it looked right, and it completely didn't work.
+
+The problem: Groq sends `arguments=null` for tools that have no parameters. Pipecat's `DirectFunctionWrapper` tries to unpack that as keyword arguments — `**None` — and crashes. There's an open issue about it, but the fix for now is to use the lower-level registration API that calls your handler with positional arguments instead.
+
 ```python
-async def get_class_schedule(params: FunctionCallParams):
-    """Get today's class schedule with subjects and times.
-    
-    Call this when a student asks about the schedule, what's next,
-    or what subjects are planned for today.
-    """
+async def get_class_schedule(function_name, tool_call_id, arguments, llm, context, result_callback):
     logger.info("Tool called: get_class_schedule")
     schedule = [
         {"time": "9:00 AM", "subject": "Math", "topic": "Multiplication tables"},
@@ -136,15 +135,13 @@ async def get_class_schedule(params: FunctionCallParams):
         {"time": "1:00 PM", "subject": "History", "topic": "Ancient Egypt"},
         {"time": "2:00 PM", "subject": "Art", "topic": "Watercolor painting"},
     ]
-    await params.result_callback(json.dumps(schedule))
+    await result_callback(schedule)
 ```
 
 Notice:
-- The function signature is `async` (all Pipecat tool functions must be async)
-- It takes `params: FunctionCallParams` as the first argument (required)
-- The docstring is clear and specific about when to use the tool
-- It calls `params.result_callback(result)` to return the data to the LLM
-- The result is JSON-serialized (the LLM is good at reading JSON)
+- The 6-parameter signature is the older Pipecat calling convention — `result_callback` is passed directly as a positional argument, not through a `params` object
+- We pass the schedule as a native Python list, not as `json.dumps(schedule)` — pipecat handles serialization, and double-encoding the result confuses the LLM
+- `arguments` might be `None` here (that's the whole Groq issue), but since we ignore it, it doesn't matter
 
 In a real application, you'd fetch this from a database or calendar API. But for demonstration purposes, mock data works perfectly and shows the pattern without external dependencies.
 
@@ -285,26 +282,40 @@ def register_tools(
     so tool functions are self-contained without global state.
     """
     
-    async def get_class_schedule(params: FunctionCallParams):
-        # Implementation here
+    async def get_class_schedule(function_name, tool_call_id, arguments, llm, context, result_callback):
+        # Uses the older 6-param style — workaround for Groq sending arguments=null
+        # for parameter-free tools, which crashes DirectFunctionWrapper
         pass
-    
+
     async def lookup_word(params: FunctionCallParams, word: str):
         # Implementation here
         pass
-    
+
     async def send_lesson_summary(params: FunctionCallParams, summary: str):
         # This can access caller_number, account_sid, etc.
         # because they're captured from the enclosing scope
         pass
-    
-    llm.register_direct_function(get_class_schedule)
+
+    # get_class_schedule uses the older API + a manual schema (Groq workaround)
+    llm.register_function("get_class_schedule", get_class_schedule)
     llm.register_direct_function(lookup_word)
     llm.register_direct_function(send_lesson_summary)
-    
+
     logger.info(
         f"Registered 3 tools on LLM (caller: {caller_number or 'unknown'})"
     )
+
+    get_class_schedule_schema = FunctionSchema(
+        name="get_class_schedule",
+        description=(
+            "Get today's class schedule with subjects and times. "
+            "Call this when a student asks about the schedule, what's next, "
+            "or what subjects are planned for today."
+        ),
+        properties={},
+        required=[],
+    )
+    return ToolsSchema(standard_tools=[get_class_schedule_schema, lookup_word, send_lesson_summary])
 ```
 
 Now in [bot.py](https://github.com/jaeyow/twilio-chatbot/blob/main/function-calling/bot.py), we call `register_tools` after creating the LLM:
@@ -318,16 +329,19 @@ async def run_bot(
     caller_number: str = "",
 ):
     llm = GroqLLMService(api_key=os.getenv("GROQ_API_KEY"))
-    
+
     # Register function calling tools on the LLM
-    register_tools(
+    tools_schema = register_tools(
         llm,
         caller_number=caller_number,
         account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
         auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
         twilio_number=os.getenv("TWILIO_PHONE_NUMBER", ""),
     )
-    
+
+    # Pass the tools schema to the LLM context so Groq knows what's available
+    context = LLMContext(messages, tools=tools_schema)
+
     # ... rest of bot setup
 ```
 

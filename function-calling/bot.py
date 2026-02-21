@@ -138,7 +138,7 @@ async def run_bot(
     )
 
     # Register function calling tools on the LLM
-    register_tools(
+    tools_schema = register_tools(
         llm,
         caller_number=caller_number,
         account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
@@ -172,7 +172,7 @@ async def run_bot(
     smart_turn_params = SmartTurnParams(stop_secs=1.5, pre_speech_ms=0.0)
     turn_analyzer = LocalSmartTurnAnalyzerV3(params=smart_turn_params)
 
-    context = LLMContext(messages)
+    context = LLMContext(messages, tools=tools_schema)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(

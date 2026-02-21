@@ -34,7 +34,7 @@ Phone Call <-> Twilio <-> Bot (Modal)
 4. The result is fed back to the LLM
 5. The LLM incorporates the result into a spoken response
 
-Tools are registered using Pipecat's `register_direct_function`, which auto-extracts the tool schema from the function signature and docstring — no manual JSON schema needed.
+Tools with parameters are registered using Pipecat's `register_direct_function`, which auto-extracts the schema from the function signature and docstring. `get_class_schedule` uses the lower-level `register_function` API with a manual `FunctionSchema` — a workaround for a Groq quirk where parameter-free tools receive `arguments=null` instead of `{}`.
 
 ## Prerequisites
 
