@@ -21,7 +21,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from pipecat.services.azure.stt import AzureSTTService
+from resilient_azure_stt import ResilientAzureSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.base_transport import BaseTransport
@@ -99,9 +99,11 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, testing: bool, 
     llm = GroqLLMService(api_key=os.getenv("GROQ_API_KEY"))
 
     # Azure STT — streams audio to Azure Cognitive Services Speech SDK.
+    # Wrapped in ResilientAzureSTTService to automatically reconnect if the
+    # Azure session is canceled due to network degradation or timeout.
     # Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in your .env file.
     # If you have a custom model, set AZURE_SPEECH_ENDPOINT_ID as well.
-    stt = AzureSTTService(
+    stt = ResilientAzureSTTService(
         api_key=os.getenv("AZURE_SPEECH_KEY"),
         region=os.getenv("AZURE_SPEECH_REGION", "eastus"),
         endpoint_id=os.getenv("AZURE_SPEECH_ENDPOINT_ID") or None,
