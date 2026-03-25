@@ -7,18 +7,32 @@ unresponsive.
 
 This module subclasses AzureSTTService and adds:
   - A `canceled` event handler (the parent registers none)
-  - Exponential back-off reconnection on CancellationReason.Error
+  - Exponential back-off reconnection on CancellationReason.Error, capped at a
+    maximum interval, then sustained indefinite retrying until the call ends
   - A retry counter that resets after successful recognition
   - Safe teardown — no reconnection if the pipeline is intentionally stopping
+
+Retry strategy
+--------------
+We never give up while the call is active. The call ending (user hanging up)
+triggers stop()/cancel() which sets _shutting_down=True and halts the loop.
+
+Back-off schedule (default):
+  Attempt 1:  sleep  1s
+  Attempt 2:  sleep  2s
+  Attempt 3:  sleep  4s
+  Attempt 4:  sleep  8s
+  Attempt 5+: sleep 30s  (capped — retries indefinitely at this interval)
+
+A 30-second Azure outage is fully covered: if the session recovers at any point,
+the next attempt will succeed and the call continues as if nothing happened.
 """
 
 import asyncio
-from typing import Optional
 
 from loguru import logger
 from pipecat.frames.frames import CancelFrame, EndFrame, StartFrame
 from pipecat.services.azure.stt import AzureSTTService
-from pipecat.transcriptions.language import Language
 
 try:
     from azure.cognitiveservices.speech import (
@@ -40,24 +54,26 @@ class ResilientAzureSTTService(AzureSTTService):
     """AzureSTTService with automatic reconnection on session cancellation.
 
     Args:
-        max_retries: Maximum reconnection attempts before giving up. Default 5.
-        base_backoff_secs: Initial back-off delay in seconds. Doubles each attempt.
+        base_backoff_secs: Initial back-off delay in seconds. Doubles each attempt
+            until max_backoff_secs is reached, then holds at that interval.
+        max_backoff_secs: Upper bound on the retry interval. Once reached, retries
+            continue indefinitely at this fixed interval until the call ends.
         All other kwargs are forwarded to AzureSTTService.
     """
 
     def __init__(
         self,
         *,
-        max_retries: int = 5,
         base_backoff_secs: float = 1.0,
+        max_backoff_secs: float = 30.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self._max_retries = max_retries
         self._base_backoff_secs = base_backoff_secs
+        self._max_backoff_secs = max_backoff_secs
         self._shutting_down = False
         self._reconnecting = False
-        self._retry_count = 0
+        self._attempt = 0
 
     # ------------------------------------------------------------------
     # Lifecycle overrides
@@ -84,10 +100,10 @@ class ResilientAzureSTTService(AzureSTTService):
     # ------------------------------------------------------------------
 
     def _on_handle_recognized(self, event):
-        """Delegate to parent, and reset retry counter after reconnection."""
-        if event.result.reason == ResultReason.RecognizedSpeech and self._retry_count > 0:
+        """Delegate to parent, and reset attempt counter after reconnection."""
+        if event.result.reason == ResultReason.RecognizedSpeech and self._attempt > 0:
             logger.info("Azure STT: recognition restored — resetting retry counter")
-            self._retry_count = 0
+            self._attempt = 0
         super()._on_handle_recognized(event)
 
     # ------------------------------------------------------------------
@@ -123,28 +139,30 @@ class ResilientAzureSTTService(AzureSTTService):
     async def _reconnect(self):
         """Attempt to re-establish the Azure STT session.
 
-        Retries up to max_retries times with exponential back-off. A concurrent
-        call is a no-op — only one reconnect loop runs at a time. If the new
-        session is later canceled again, _on_canceled will schedule another call.
+        Retries indefinitely with exponential back-off capped at max_backoff_secs.
+        The loop only exits on success or when the pipeline is intentionally torn
+        down (_shutting_down=True). A concurrent call is a no-op.
+
+        We never give up while the call is active — the user hanging up (which
+        triggers stop()/cancel()) is the only thing that should end the loop.
         """
         if self._shutting_down or self._reconnecting:
             return
 
         self._reconnecting = True
         try:
-            while self._retry_count < self._max_retries:
-                if self._shutting_down:
-                    return
-
-                backoff = self._base_backoff_secs * (2 ** self._retry_count)
-                self._retry_count += 1
+            while not self._shutting_down:
+                backoff = min(
+                    self._base_backoff_secs * (2 ** self._attempt),
+                    self._max_backoff_secs,
+                )
+                self._attempt += 1
                 logger.warning(
-                    f"Azure STT: reconnecting in {backoff:.0f}s "
-                    f"(attempt {self._retry_count}/{self._max_retries})"
+                    f"Azure STT: reconnecting in {backoff:.0f}s (attempt {self._attempt})"
                 )
 
                 # Tear down the dead session before sleeping so we're not
-                # holding onto a broken recognizer during the back-off window.
+                # holding a broken recognizer during the back-off window.
                 self._teardown_recognizer()
 
                 await asyncio.sleep(backoff)
@@ -158,18 +176,9 @@ class ResilientAzureSTTService(AzureSTTService):
                     return  # Success — exit. _on_canceled handles future failures.
                 except Exception as e:
                     logger.error(
-                        f"Azure STT: reconnection attempt {self._retry_count} failed: {e}"
+                        f"Azure STT: reconnection attempt {self._attempt} failed: {e}"
                     )
-                    # Continue loop for next retry with longer back-off.
-
-            # All retries exhausted.
-            logger.error(
-                f"Azure STT: failed to reconnect after {self._max_retries} attempts — giving up"
-            )
-            await self.push_error(
-                error_msg="Azure STT session failed permanently after max retries"
-            )
-
+                    # Continue loop — next iteration will use a longer (or capped) back-off.
         finally:
             self._reconnecting = False
 
