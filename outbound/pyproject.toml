@@ -9,15 +9,23 @@ dependencies = [
     "pipecatcloud>=0.2.18",
     "twilio",
     "requests",
+    "azure-cognitiveservices-speech>=1.38.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
 ]
 
 [dependency-groups]
 dev = [
     "pyright>=1.1.404,<2",
     "ruff>=0.12.11,<1",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
 ]
 
 [tool.ruff]
 line-length = 100
 [tool.ruff.lint]
 select = ["I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
