@@ -26,9 +26,13 @@ image = (
         "twilio",
         "python-dotenv",
         "requests",
+        "azure-cognitiveservices-speech>=1.38.0",
+        "opentelemetry-api>=1.20.0",
+        "opentelemetry-sdk>=1.20.0",
     )
     .run_commands("python -c 'from pyrnnoise import RNNoise; RNNoise(sample_rate=48000)'")
     .add_local_file("bot.py", "/root/bot.py")
+    .add_local_dir("eval", "/root/eval")
 )
 
 # ---------------------------------------------------------------------------
@@ -61,9 +65,13 @@ def serve():
     from twilio.rest import Client as TwilioClient
     from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 
+    import asyncio
+
     # Eagerly import bot and pipecat modules at container init (not per-request)
     # so the WebSocket handler doesn't pay import cost when Twilio connects.
     from bot import bot
+    from eval.azure_stt_handler import run_azure_stt_from_queue
+    from eval.websocket_tee import WebSocketTee
     from pipecat.runner.types import WebSocketRunnerArguments
 
     web_app = FastAPI()
@@ -131,15 +139,21 @@ def serve():
 
     @web_app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        """Accept Twilio Media Stream and run the Pipecat bot pipeline."""
+        """Accept Twilio Media Stream, run Pipecat bot and Azure STT eval in parallel."""
         await websocket.accept()
         logger.info("WebSocket connection accepted for outbound call")
 
-        try:
-            runner_args = WebSocketRunnerArguments(websocket=websocket)
-            await bot(runner_args)
-        except Exception as e:
-            logger.error(f"Error in bot pipeline: {type(e).__name__}: {e}")
-            logger.error(traceback.format_exc())
+        queue: asyncio.Queue = asyncio.Queue()
+        tee = WebSocketTee(websocket, queue)
+
+        results = await asyncio.gather(
+            bot(WebSocketRunnerArguments(websocket=tee)),
+            run_azure_stt_from_queue(queue),
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error(f"Error in WebSocket task: {type(r).__name__}: {r}")
+                logger.error(traceback.format_exc())
 
     return web_app

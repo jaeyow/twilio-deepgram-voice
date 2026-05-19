@@ -10,6 +10,7 @@ Webhook server to handle outbound call requests, initiate calls via Twilio API,
 and handle subsequent WebSocket connections for Media Streams.
 """
 
+import asyncio
 import os
 
 import uvicorn
@@ -84,25 +85,28 @@ async def get_twiml(request: Request) -> HTMLResponse:
 async def websocket_endpoint(websocket: WebSocket):
     """Handle WebSocket connection from Twilio Media Streams.
 
-    This endpoint receives the WebSocket connection from Twilio's Media Streams
-    and runs the bot to handle the voice conversation. Stream parameters passed
-    from TwiML are available to the bot for customization.
-
-    Args:
-        websocket (WebSocket): FastAPI WebSocket connection from Twilio.
+    Wraps the websocket with a message tee so the Azure STT eval handler
+    receives the same Twilio audio frames without touching the Pipecat pipeline.
     """
     from bot import bot
+    from eval.azure_stt_handler import run_azure_stt_from_queue
+    from eval.websocket_tee import WebSocketTee
     from pipecat.runner.types import WebSocketRunnerArguments
 
     await websocket.accept()
     logger.info("WebSocket connection accepted for outbound call")
 
-    try:
-        runner_args = WebSocketRunnerArguments(websocket=websocket)
-        await bot(runner_args)
-    except Exception as e:
-        logger.error(f"Error in WebSocket endpoint: {e}")
-        await websocket.close()
+    queue: asyncio.Queue = asyncio.Queue()
+    tee = WebSocketTee(websocket, queue)
+
+    results = await asyncio.gather(
+        bot(WebSocketRunnerArguments(websocket=tee)),
+        run_azure_stt_from_queue(queue),
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, Exception):
+            logger.error(f"Error in WebSocket task: {r}")
 
 
 if __name__ == "__main__":
