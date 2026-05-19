@@ -39,6 +39,8 @@ from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy, VADUser
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from eval.transcription_capture import TranscriptionCapture
+
 load_dotenv(override=True)
 
 # Reduce logging noise from empty audio frame warnings
@@ -120,10 +122,13 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, call_sid: str =
         ),
     )
 
+    capture = TranscriptionCapture(call_sid=call_sid)
+
     pipeline = Pipeline(
         [
             transport.input(),  # Websocket input from client
             stt,  # Speech-To-Text
+            capture,  # Eval: capture Deepgram transcriptions into eval store
             user_aggregator,
             llm,  # LLM
             tts,  # Text-To-Speech
